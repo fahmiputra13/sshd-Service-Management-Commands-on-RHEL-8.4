@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RHEL 8 sshd Service Management Simulator</title>
+  
+  <!-- Load Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Load React and ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Load Babel to compile JSX in the browser -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-950">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, Component } = React;
+
+    // Error Boundary to prevent full blank screens in React
+    class ErrorBoundary extends Component {
+      constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null };
+      }
+      static getDerivedStateFromError(error) {
+        return { hasError: true, error };
+      }
+      render() {
+        if (this.state.hasError) {
+          return (
+            <div className="flex h-screen items-center justify-center bg-slate-950 text-red-500 p-10 font-mono flex-col text-center">
+              <h1 className="text-4xl font-bold mb-4">Simulator Crashed!</h1>
+              <p className="bg-slate-900 p-4 rounded border border-red-900">{this.state.error?.toString()}</p>
+              <p className="text-slate-400 mt-4 text-sm">Please refresh the page to start over.</p>
+            </div>
+          );
+        }
+        return this.props.children;
+      }
+    }
+
+    const GUIDELINE_STEPS = [
+      {
+        stepNum: 0, title: "1. Check Service Status",
+        content: "Check the current status and recent logs of the SSH daemon.\nCommand: `systemctl status sshd.service`",
+        expectedCmd: /^(sudo\s+)?systemctl\s+status\s+sshd(\.service)?$/, expectedText: "systemctl status sshd.service",
+        explanation: {
+          en: "Displays the current status and recent log entries of the SSH daemon. 'enabled' means it starts at boot, and 'active (running)' means it is currently running.",
+          ms: "Memaparkan status semasa dan entri log terbaru daemon SSH. 'enabled' bermaksud ia dihidupkan semasa but, dan 'active' bermaksud ia sedang berjalan.",
+          zh: "显示 SSH 守护进程的当前状态及最近的日志条目。enabled 表示开机自启已开启，active (running)表示当前正在运行。"
+        }
+      },
+      {
+        stepNum: 1, title: "2a. Start the Service",
+        content: "Start the SSH service immediately for the current session.\nCommand: `sudo systemctl start sshd.service`",
+        expectedCmd: /^sudo\s+systemctl\s+start\s+sshd(\.service)?$/, expectedText: "sudo systemctl start sshd.service",
+        explanation: {
+          en: "Starts the SSH service immediately. This only affects the current runtime state.",
+          ms: "Memulakan servis SSH serta-merta. Ini hanya memberi kesan kepada keadaan masa jalanan semasa.",
+          zh: "立即启动 SSH 服务。这只影响当前运行状态。"
+        }
+      },
+      {
+        stepNum: 2, title: "2b. Stop the Service",
+        content: "Stop the SSH service immediately.\nCommand: `sudo systemctl stop sshd.service`",
+        expectedCmd: /^sudo\s+systemctl\s+stop\s+sshd(\.service)?$/, expectedText: "sudo systemctl stop sshd.service",
+        explanation: {
+          en: "Stops the SSH service. Connections will be dropped and it will not run until started again.",
+          ms: "Menghentikan perkhidmatan SSH. Sambungan akan terputus dan ia tidak akan berjalan sehingga dimulakan semula.",
+          zh: "停止 SSH 服务。连接将被断开，直到再次启动前不会运行。"
+        }
+      },
+      {
+        stepNum: 3, title: "2c. Restart the Service",
+        content: "Restart the SSH service (stops and starts it again).\nCommand: `sudo systemctl restart sshd.service`",
+        expectedCmd: /^sudo\s+systemctl\s+restart\s+sshd(\.service)?$/, expectedText: "sudo systemctl restart sshd.service",
+        explanation: {
+          en: "Restarting a service drops all current connections and starts the service fresh.",
+          ms: "Memulakan semula perkhidmatan akan memutuskan semua sambungan semasa dan memulakan perkhidmatan dari awal.",
+          zh: "重启 SSH 服务会中断当前连接并重新启动服务。"
+        }
+      },
+      {
+        stepNum: 4, title: "3a. Enable at Boot",
+        content: "Enable the SSH daemon to start automatically at boot.\nCommand: `sudo systemctl enable sshd.service`",
+        expectedCmd: /^sudo\s+systemctl\s+enable\s+sshd(\.service)?$/, expectedText: "sudo systemctl enable sshd.service",
+        explanation: {
+          en: "Enables the SSH daemon to start automatically at boot. Does not change current runtime state.",
+          ms: "Menetapkan daemon SSH untuk bermula secara automatik semasa but. Tidak mengubah status semasa.",
+          zh: "将SSH 服务设置为开机自动启动。不改变当前运行状态。"
+        }
+      },
+      {
+        stepNum: 5, title: "3b. Disable at Boot",
+        content: "Disable the SSH service so it will NOT start automatically at boot.\nCommand: `sudo systemctl disable sshd.service`",
+        expectedCmd: /^sudo\s+systemctl\s+disable\s+sshd(\.service)?$/, expectedText: "sudo systemctl disable sshd.service",
+        explanation: {
+          en: "Disables the SSH service so it will not start automatically at boot.",
+          ms: "Membatalkan autostart perkhidmatan SSH semasa but.",
+          zh: "取消 SSH 服务的开机自动启动。"
+        }
+      },
+      {
+        stepNum: 6, title: "3c. Enable and Start Now",
+        content: "Enable the SSH daemon to start at boot AND start it immediately.\nCommand: `sudo systemctl enable --now sshd.service`",
+        expectedCmd: /^sudo\s+systemctl\s+enable\s+(--now|now)\s+sshd(\.service)?$/, expectedText: "sudo systemctl enable --now sshd.service",
+        explanation: {
+          en: "The '--now' flag makes the current state change immediately alongside the boot configuration.",
+          ms: "Flag '--now' membolehkan perubahan status autostart dan status berjalan dilakukan serentak.",
+          zh: "一条命令同时完成“设置开机自启”和“立即启动”。"
+        }
+      },
+      {
+        stepNum: 7, title: "4. Reload Configuration",
+        content: "Cause sshd to re-read its config file WITHOUT terminating existing SSH sessions.\nCommand: `sudo systemctl reload sshd.service`",
+        expectedCmd: /^sudo\s+systemctl\s+reload\s+sshd(\.service)?$/, expectedText: "sudo systemctl reload sshd.service",
+        explanation: {
+          en: "Reload applies configuration changes smoothly without dropping connections. Red Hat explicitly recommends this for sshd.",
+          ms: "Reload mengaplikasikan perubahan konfigurasi dengan lancar tanpa mengganggu sambungan sedia ada.",
+          zh: "让 sshd 重新读取配置文件，而不中断已有的 SSH 连接。"
+        }
+      },
+      {
+        stepNum: 8, title: "5a. Mask the Service",
+        content: "Completely mask the service so it cannot be started manually or automatically.\nCommand: `sudo systemctl mask sshd.service`",
+        expectedCmd: /^sudo\s+systemctl\s+mask\s+sshd(\.service)?$/, expectedText: "sudo systemctl mask sshd.service",
+        explanation: {
+          en: "Masking links the service to /dev/null, making it impossible to start. It is a stronger block than 'disable'.",
+          ms: "Masking menghalakan perkhidmatan ke /dev/null, menjadikannya mustahil untuk dimulakan sama sekali.",
+          zh: "彻底屏蔽服务，使其无法被手动或自动启动（将其链接到 /dev/null）。"
+        }
+      },
+      {
+        stepNum: 9, title: "5b. Unmask the Service",
+        content: "Remove the mask so the service can be started again.\nCommand: `sudo systemctl unmask sshd.service`",
+        expectedCmd: /^sudo\s+systemctl\s+unmask\s+sshd(\.service)?$/, expectedText: "sudo systemctl unmask sshd.service",
+        explanation: {
+          en: "Unmasking removes the /dev/null symlink, restoring normal service management.",
+          ms: "Membuang symlink /dev/null, memulihkan pengurusan perkhidmatan kepada normal.",
+          zh: "解除屏蔽，移除 /dev/null 链接，使服务恢复正常管理。"
+        }
+      },
+      {
+        stepNum: 10, title: "5c. Check if Active",
+        content: "Check specifically if the service is currently running.\nCommand: `systemctl is-active sshd`",
+        expectedCmd: /^(sudo\s+)?systemctl\s+is-active\s+sshd(\.service)?$/, expectedText: "systemctl is-active sshd",
+        explanation: {
+          en: "A quick command that outputs 'active' if running, or 'inactive' if not.",
+          ms: "Arahan pantas yang mengeluarkan 'active' jika berjalan, atau 'inactive' jika tidak.",
+          zh: "判断是否运行，运行则输出 active，否则输出 inactive。"
+        }
+      },
+      {
+        stepNum: 11, title: "5d. Check if Enabled",
+        content: "Check specifically if the service is set to start at boot.\nCommand: `systemctl is-enabled sshd`",
+        expectedCmd: /^(sudo\s+)?systemctl\s+is-enabled\s+sshd(\.service)?$/, expectedText: "systemctl is-enabled sshd",
+        explanation: {
+          en: "Outputs 'enabled' if it will start at boot, or 'disabled' if it will not.",
+          ms: "Mengeluarkan 'enabled' jika ia akan bermula semasa but, atau 'disabled' jika tidak.",
+          zh: "判断是否开机自启，是则输出 enabled，否则输出 disabled。"
+        }
+      }
+    ];
+
+    const INITIAL_TERMINAL_HISTORY = [
+      "Red Hat Enterprise Linux 8.4 (Ootpa)",
+      "Kernel 4.18.0-193.el8.x86_64 on an x86_64",
+      "",
+      "Welcome to the RHEL 8 Systemctl Lab.",
+      "Follow the guidelines to manage the SSH daemon.",
+      ""
+    ];
+
+    function App() {
+      const [currentStep, setCurrentStep] = useState(0);
+      const [language, setLanguage] = useState('en');
+      const [terminalHistory, setTerminalHistory] = useState(INITIAL_TERMINAL_HISTORY);
+      const [errorModal, setErrorModal] = useState({ isOpen: false, typed: "", expected: "", reason: "" });
+
+      const showError = (typed, expected, reason) => setErrorModal({ isOpen: true, typed, expected, reason });
+      const closeError = () => setErrorModal({ isOpen: false, typed: "", expected: "", reason: "" });
+
+      const resetApp = () => {
+        setCurrentStep(0);
+        setTerminalHistory(INITIAL_TERMINAL_HISTORY);
+        closeError();
+      };
+
+      const handleTerminalCommand = (cmd) => {
+        const trimmedCmd = cmd.trim();
+        const newHistory = [...terminalHistory];
+        
+        newHistory.push(`[student@rhel8 ~]$ ${cmd}`);
+
+        if (trimmedCmd === "") {
+          setTerminalHistory(newHistory);
+          return;
+        }
+
+        if (trimmedCmd === "clear") {
+          setTerminalHistory([]);
+          return;
+        }
+
+        const stepObj = GUIDELINE_STEPS[currentStep];
+
+        // Check if command matches the current objective
+        if (stepObj && stepObj.expectedCmd.test(trimmedCmd)) {
+          // Output mock systemctl responses
+          if (currentStep === 0) { // status
+            newHistory.push("● sshd.service - OpenSSH server daemon");
+            newHistory.push("   Loaded: loaded (/usr/lib/systemd/system/sshd.service; enabled; vendor preset: enabled)");
+            newHistory.push("   Active: active (running) since Tue 2026-10-22 14:00:00 +08; 1h ago");
+            newHistory.push(" Main PID: 1234 (sshd)");
+            newHistory.push("    Tasks: 1 (limit: 23513)");
+            newHistory.push("   CGroup: /system.slice/sshd.service");
+            newHistory.push("           └─1234 /usr/sbin/sshd -D -oCiphers=... -oMACs=...");
+            setCurrentStep(1);
+          } else if (currentStep === 1) { // start
+            setCurrentStep(2);
+          } else if (currentStep === 2) { // stop
+            setCurrentStep(3);
+          } else if (currentStep === 3) { // restart
+            setCurrentStep(4);
+          } else if (currentStep === 4) { // enable
+            newHistory.push("Created symlink /etc/systemd/system/multi-user.target.wants/sshd.service → /usr/lib/systemd/system/sshd.service.");
+            setCurrentStep(5);
+          } else if (currentStep === 5) { // disable
+            newHistory.push("Removed /etc/systemd/system/multi-user.target.wants/sshd.service.");
+            setCurrentStep(6);
+          } else if (currentStep === 6) { // enable --now
+            newHistory.push("Created symlink /etc/systemd/system/multi-user.target.wants/sshd.service → /usr/lib/systemd/system/sshd.service.");
+            setCurrentStep(7);
+          } else if (currentStep === 7) { // reload
+            setCurrentStep(8);
+          } else if (currentStep === 8) { // mask
+            newHistory.push("Created symlink /etc/systemd/system/sshd.service → /dev/null.");
+            setCurrentStep(9);
+          } else if (currentStep === 9) { // unmask
+            newHistory.push("Removed /etc/systemd/system/sshd.service.");
+            setCurrentStep(10);
+          } else if (currentStep === 10) { // is-active
+            newHistory.push("active");
+            setCurrentStep(11);
+          } else if (currentStep === 11) { // is-enabled
+            newHistory.push("enabled");
+            setCurrentStep(12); // SUCCESS
+          }
+        } else if (currentStep < 12) {
+          // Wrong command for the current step
+          showError(
+            cmd, 
+            stepObj.expectedText, 
+            "Your command did not match the current objective. Remember to check your spelling and include 'sudo' or '.service' if required by the step."
+          );
+        }
+
+        setTerminalHistory(newHistory);
+      };
+
+      return (
+        <div className="flex flex-col xl:flex-row h-screen w-full bg-slate-950 text-slate-200 font-sans">
+          
+          {/* Left Pane: PDF Guidelines */}
+          <div className="w-full xl:w-1/3 bg-slate-900 border-r border-slate-700 flex flex-col p-6 overflow-y-auto shadow-xl z-10">
+            <div className="mb-6 pb-4 border-b border-slate-700">
+              <h1 className="text-2xl font-bold text-sky-400 mb-1">RHEL 8 Service Mgmt</h1>
+              <div className="flex justify-between items-center mt-3">
+                <h2 className="text-[11px] font-mono text-slate-400 truncate mr-2">Ref: sshd Service Management Commands</h2>
+                
+                {/* Language Toggle with FULL names */}
+                <div className="flex bg-slate-950 rounded-lg p-1 border border-slate-700 shrink-0 shadow-inner">
+                  <button onClick={() => setLanguage('en')} className={`text-xs px-3 py-1 rounded-md transition-all font-bold ${language === 'en' ? 'bg-blue-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>English</button>
+                  <button onClick={() => setLanguage('ms')} className={`text-xs px-3 py-1 rounded-md transition-all font-bold ${language === 'ms' ? 'bg-emerald-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>Bahasa Melayu</button>
+                  <button onClick={() => setLanguage('zh')} className={`text-xs px-3 py-1 rounded-md transition-all font-bold ${language === 'zh' ? 'bg-amber-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>Chinese</button>
+                </div>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              {GUIDELINE_STEPS.map((step, index) => {
+                const isActive = step.stepNum === currentStep;
+                const isPast = step.stepNum < currentStep;
+                
+                return (
+                  <div key={index} className={`p-4 rounded-xl transition-all duration-300 relative overflow-hidden ${isActive ? "bg-sky-900/40 border border-sky-500 shadow-[0_0_15px_rgba(14,165,233,0.2)] transform scale-[1.02]" : isPast ? "bg-slate-800/60 border border-slate-700/50 opacity-60" : "bg-slate-800/30 border border-transparent opacity-40"}`}>
+                    {isActive && <div className="absolute left-0 top-0 bottom-0 w-1 bg-sky-500"></div>}
+                    <h3 className={`font-semibold mb-2 flex items-center ${isActive ? "text-sky-300" : "text-slate-300"}`}>
+                      {isPast && <span className="text-green-500 mr-2 text-lg">✓</span>}
+                      {isActive && <span className="animate-pulse w-2 h-2 bg-sky-400 rounded-full mr-2"></span>}
+                      {step.title}
+                    </h3>
+                    <p className="text-sm whitespace-pre-wrap text-slate-300 font-medium leading-relaxed">{step.content}</p>
+                    
+                    {isActive && (
+                      <div className="mt-4 p-3 bg-slate-950/80 rounded-lg border border-slate-700 shadow-inner animate-in slide-in-from-top-2 duration-300">
+                        <h4 className="text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest border-b border-slate-700 pb-1">
+                          {language === 'en' ? 'Explanation' : language === 'ms' ? 'Penerangan' : '解释'}
+                        </h4>
+                        <div className="text-[13px] leading-snug">
+                          {language === 'en' && <p className="text-blue-200">{step.explanation.en}</p>}
+                          {language === 'ms' && <p className="text-emerald-200">{step.explanation.ms}</p>}
+                          {language === 'zh' && <p className="text-amber-200">{step.explanation.zh}</p>}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              
+              {currentStep === 12 && (
+                <div className="p-6 rounded-xl bg-green-900/40 border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.2)] text-center animate-in zoom-in duration-500">
+                  <h3 className="text-2xl font-bold text-green-400 mb-2">Lab Complete!</h3>
+                  <p className="text-green-200 mb-4 text-sm">You have successfully executed all systemd commands for managing the sshd service.</p>
+                  <button onClick={resetApp} className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white font-bold rounded-lg transition-colors">Restart Lab</button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right Pane: Terminal Window */}
+          <div className="w-full xl:w-2/3 bg-[#1e1e1e] flex flex-col p-4 sm:p-8 items-center justify-center relative overflow-hidden">
+            
+            <div className="w-full max-w-5xl bg-[#2d2d2d] rounded-t-lg shadow-2xl border border-gray-700 flex flex-col h-[700px] max-h-[90vh]">
+              {/* Fake Window Header */}
+              <div className="bg-[#3c3c3c] text-gray-300 text-xs flex items-center px-4 py-2 rounded-t-lg border-b border-black">
+                <span className="mr-4 hover:bg-gray-600 px-2 py-1 rounded cursor-pointer">File</span>
+                <span className="mr-4 hover:bg-gray-600 px-2 py-1 rounded cursor-pointer">Edit</span>
+                <span className="mr-4 hover:bg-gray-600 px-2 py-1 rounded cursor-pointer">View</span>
+                <span className="mr-4 hover:bg-gray-600 px-2 py-1 rounded cursor-pointer">Search</span>
+                <span className="mr-4 hover:bg-gray-600 px-2 py-1 rounded cursor-pointer">Terminal</span>
+                <span className="mr-4 hover:bg-gray-600 px-2 py-1 rounded cursor-pointer">Help</span>
+              </div>
+              
+              {/* Objective Bar formatted nicely */}
+              <div className="bg-sky-950 text-sky-100 p-2 sm:p-3 flex items-center border-b border-black text-sm sm:text-base shadow-inner">
+                <span className="font-bold mr-3 text-yellow-400 animate-pulse">CURRENT GOAL:</span> 
+                <span className="font-mono font-semibold">
+                  {currentStep < 12 ? `Type: ${GUIDELINE_STEPS[currentStep].expectedText}` : "Lab Complete!"}
+                </span>
+              </div>
+
+              <div className="bg-[#2d2d2d] border-b border-black flex px-2 pt-2">
+                <div className="bg-[#1e1e1e] text-white text-xs px-4 py-1.5 rounded-t-md border-t border-l border-r border-gray-700 flex items-center">
+                  <span className="mr-2">Terminal</span> student@rhel8:~ <span className="ml-4 text-gray-500 hover:text-white cursor-pointer">×</span>
+                </div>
+              </div>
+
+              <div className="flex-grow bg-[#121212] relative overflow-hidden flex flex-col">
+                <TerminalScreen 
+                  history={terminalHistory} 
+                  onCommand={handleTerminalCommand} 
+                  disabled={currentStep === 12}
+                />
+                
+                {/* Updated Error Modal */}
+                {errorModal.isOpen && (
+                  <ErrorDialog modal={errorModal} onClose={closeError} />
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function TerminalScreen({ history, onCommand, disabled }) {
+      const [inputValue, setInputValue] = useState("");
+      const endRef = useRef(null);
+
+      useEffect(() => {
+        endRef.current?.scrollIntoView({ behavior: "auto" });
+      }, [history, inputValue]);
+
+      const handleKeyDown = (e) => {
+        if (e.key === 'Enter' && !disabled) {
+          onCommand(inputValue);
+          setInputValue("");
+        }
+      };
+
+      return (
+        <div className="w-full h-full text-gray-200 font-mono text-base p-4 overflow-y-auto flex flex-col">
+          <div className="flex-grow">
+            {history.map((line, i) => {
+              const safeLine = typeof line === 'string' ? line : String(line || "");
+              const isCommand = safeLine.startsWith("[student@rhel8 ~]$ ");
+              const isGreen = safeLine.includes("active (running)") || safeLine === "active" || safeLine === "enabled";
+              
+              return (
+                <div key={i} className={`whitespace-pre-wrap ${isCommand ? "text-green-400 font-bold mt-1" : ""} ${isGreen ? "text-green-500 font-bold" : ""}`}>
+                  {safeLine}
+                </div>
+              );
+            })}
+            
+            {!disabled && (
+              <div className="flex mt-1 text-green-400 font-bold">
+                <span className="whitespace-pre-wrap mr-2">[student@rhel8 ~]$ </span>
+                <input 
+                  type="text"
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  autoFocus
+                  className="flex-grow bg-transparent text-gray-200 font-normal outline-none border-none focus:ring-0 p-0 font-mono"
+                  autoComplete="off"
+                  spellCheck="false"
+                />
+              </div>
+            )}
+            <div ref={endRef} className="h-4" />
+          </div>
+        </div>
+      );
+    }
+
+    function ErrorDialog({ modal, onClose }) {
+      return (
+        <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-50 p-6 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-[#1e1e1e] border-2 border-red-500 rounded-xl max-w-lg w-full shadow-2xl shadow-red-900/40 flex flex-col overflow-hidden">
+            <div className="bg-red-950/50 px-6 py-4 border-b border-red-900 flex items-center">
+              <div className="bg-red-500 text-white rounded-full w-8 h-8 flex items-center justify-center mr-3 font-bold text-xl shadow-lg">!</div>
+              <h3 className="text-xl font-bold text-red-400">Action Incorrect</h3>
+            </div>
+            
+            <div className="p-6 space-y-5">
+              <div className="space-y-1">
+                <span className="text-red-400 text-xs uppercase font-bold tracking-wider ml-1">You Typed / Did:</span>
+                <div className="bg-black/60 p-3 rounded-lg border border-red-900/50 font-mono text-gray-300 break-all">
+                  {modal.typed || "<Empty>"}
+                </div>
+              </div>
+              
+              <div className="space-y-1">
+                <span className="text-green-400 text-xs uppercase font-bold tracking-wider ml-1">You Should Type / Do:</span>
+                <div className="bg-black/60 p-3 rounded-lg border border-green-900/50 font-mono text-green-400 font-bold break-all">
+                  {modal.expected}
+                </div>
+              </div>
+
+              <div className="bg-blue-950/30 p-4 rounded-lg border border-blue-900/30">
+                <span className="text-blue-400 text-xs uppercase font-bold tracking-wider mb-1 block">Explanation:</span>
+                <p className="text-slate-300 text-sm leading-relaxed">{modal.reason}</p>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-black/40 border-t border-gray-800">
+              <button onClick={onClose} className="w-full py-3 bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold rounded-lg transition-colors shadow-lg">
+                I understand, let me try again
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Render the App wrapped in ErrorBoundary
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<ErrorBoundary><App /></ErrorBoundary>);
+  </script>
+</body>
+</html>
